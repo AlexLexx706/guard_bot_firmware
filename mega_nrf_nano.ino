@@ -3,8 +3,8 @@
 #include <Wire.h>
 #include <L3G.h>
 
-RF24 radio(10, 9); // CE, CSN
-byte address[6] = "1Node";  //receive address
+static RF24 radio(10, 9); // CE, CSN
+static byte address[6] = "1Node";  //receive address
 
 // motor one
 const int enA = 8;
@@ -16,11 +16,10 @@ const int enB = 7;
 const int in3 = 4;
 const int in4 = 3;
 
-int left_power = 0;
-int right_power = 0;
-int power_step = 20;
+static int power_step = 20;
+static int motor_power = 0;
 
-L3G gyro;
+static L3G gyro;
 
 //giroscope offsets, for best accuracy
 const float gyro_offset_x = -0.301108079748;
@@ -28,7 +27,16 @@ const float gyro_offset_y = -0.232206190976;
 const float gyro_offset_z = -0.301108079748;
 
 //current angular rate
-float cur_rate = 0.0;
+static float cur_rate = 0.0;
+static float int_value = 0.0;
+static float old_error = 0.0;
+
+//PID factors
+static float k_p = 1.0;
+static float k_i = 0.1;
+static float k_d = 0.3;
+static float k_ff = 0.0;
+
 
 
 //process actions from controllers
@@ -37,44 +45,44 @@ void process_actions(char action) {
 
   switch (action) {
     case 'w': {
-      left_power += power_step;
-      right_power += power_step;
+      motor_power += power_step;
       update = 1;
       break;
     }
     case 's': {
-      left_power -= power_step;
-      right_power -= power_step;
+      motor_power -= power_step;
       update = 1;
       break;
     }
     case ' ': {
-      left_power = 0;
-      right_power = 0;
+      motor_power = 0;
       cur_rate = 0.0;
+      int_value = 0.0;
+      old_error = 0.0;
+
       update = 1;
       break;
     }
     case 'a': {
       // left_power -= power_step;
       // right_power += power_step;
-      cur_rate += 0.1;
+      cur_rate += 10.;
       update = 1;
       break;
     }
     case 'd': {
       // left_power += power_step;
       // right_power -= power_step;
-      cur_rate -= 0.1;
+      cur_rate -= 10.;
       update = 1;
       break;
     }
   }
 
   if (update) {
-    Serial.print("action:"); Serial.println(action);
-    Serial.print("left_power:");  Serial.println(left_power);
-    Serial.print("right_power:"); Serial.println(right_power);
+    Serial.print("action: "); Serial.println(action);
+    Serial.print("motor_power: ");  Serial.println(motor_power);
+    Serial.print("cur_rate: "); Serial.println(cur_rate, 4);
   }
 
 }
@@ -84,38 +92,52 @@ void update_controller() {
   static unsigned long start_time = 0;
   unsigned long cur_time = micros();
  
-  //FPS = 190 ->equal gyro data
-  if (cur_time - start_time < 5264) {
+  // 1. check update, FPS = 190 ->equal gyro data
+  unsigned long micros_dt = cur_time - start_time;
+  if (micros_dt < 5264) {
     return;
   }
+  start_time = cur_time;
 
-  start_time = cur_time; 
+  // 2. get current dt in sec
+  float dt = micros_dt / 1000000.f;
+  // Serial.print("micros_dt: "); Serial.print(micros_dt);
+  // Serial.print(" dt: "); Serial.println(dt, 6);
 
-  // static float x,y;
-  static float z;
-  //read gyro data
+  // read gyro data
   gyro.read();
 
-  //convert to deg per second and remove biase
-  // x = gyro.g.x * 0.00875 - gyro_offset_x;
-  // y = gyro.g.y * 0.00875 - gyro_offset_y;
-  z = gyro.g.z * 0.00875 - gyro_offset_z;
+  // 3. calculate giro rate value
+  float g_z = gyro.g.z * 0.00875 - gyro_offset_z;
 
-  //controller
-  // static float int_value = 0.0;
-  // static float old_error = 0.0;
-  // float error = cur_rate - z;
-  // float p_value = error * 0;
-  // float d_value = (old_error - error) * 0.1; 
-  // int_value += error * 0.1;
-  // float common_value = p_value + int_value + d_value;
-  // old_error = error;
+  // 4. calculate heading angle
+  static float heading = 0.0;
+  heading +=  g_z * dt;
 
-  // left_power = -common_value;
-  // right_power = common_value;
-  // Serial.print("e: "); Serial.print(error);
-  // Serial.print(" i_v: "); Serial.print(int_value);
-  // Serial.print(" c_v: "); Serial.println(common_value);
+  // Serial.print("g_z: "); Serial.print(g_z, 4);
+  // Serial.print(" heading: "); Serial.println(heading, 4);
+
+  // 5. update controller 
+  float error = cur_rate - g_z;
+  float p_value = error * k_p;
+  float d_value = (error - old_error) * k_d;
+  float ff_value =  cur_rate * k_ff;
+
+  int_value += error * k_i;
+  float common_value = p_value + int_value + d_value + ff_value;
+  old_error = error;
+
+  int left_power = motor_power - common_value;
+  int right_power = motor_power + common_value;
+
+  Serial.print(" t_r: "); Serial.print(cur_rate, 4);
+  Serial.print(" c_r: "); Serial.print(g_z, 4);
+  Serial.print(" e: "); Serial.print(error, 4);
+  Serial.print(" p_v: "); Serial.print(p_value, 4);
+  Serial.print(" i_v: "); Serial.print(int_value, 4);
+  Serial.print(" d_v: "); Serial.print(d_value, 4);
+  Serial.print(" ff_v: "); Serial.print(ff_value, 4);
+  Serial.print(" c_v: "); Serial.println(common_value, 4);
 
   if (abs(left_power) > 255) {
     left_power = left_power > 0 ? 255 : -255; 
@@ -150,10 +172,10 @@ void update_controller() {
   static int process_count = 0;
   process_count++;
  
-  unsigned long dt = cur_time - start_count_time;
-  if (dt > 3000000) {
+  unsigned long count_dt = cur_time - start_count_time;
+  if (count_dt > 3000000) {
     start_count_time = cur_time;
-    Serial.print("process per second:"); Serial.println(int(process_count / (dt / 1000000.)));
+    Serial.print("process per second:"); Serial.println(int(process_count / (count_dt / 1000000.)));
     process_count = 0;
   }
 }
