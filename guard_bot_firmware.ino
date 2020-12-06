@@ -376,7 +376,7 @@ void setup() {
   gyro.enableDefault();
 
   //5. setup camera
-  setup_mouse_camera();
+  // setup_mouse_camera();
 }
 
 static float packet[2];
@@ -385,20 +385,28 @@ void loop() {
   unsigned long data = 0;
   //data come
 
-  if (radio.available()) {
-    while (radio.available()) {         // While there is data ready
-      radio.read(packet, sizeof(packet));  // Get the payload
-      // Serial.print("Radio receive: w:"); Serial.print(packet[0]); Serial.print(" v:"); Serial.println(packet[1]); 
-      motor_power = packet[1];
-      cur_rate = packet[0];
-    }
-  }
+  // if (radio.available()) {
+  //   while (radio.available()) {         // While there is data ready
+  //     radio.read(packet, sizeof(packet));  // Get the payload
+  //     Serial.print("Radio receive: w:"); Serial.print(packet[0]); Serial.print(" v:"); Serial.println(packet[1]); 
+  //     motor_power = packet[1];
+  //     cur_rate = packet[0];
+  //   }
+  // }
   
   if (Serial.available()) {
     data = Serial.read();
   }
 
+
+  if (radio.available()) {
+    while (radio.available()) {         // While there is data ready
+      radio.read(&data, sizeof(data));  // Get the payload
+      Serial.print("Radio receive:"); Serial.println(data);
+    }
+  }
+
   process_actions(data);
   update_controller();
-  updateSensor();
+  // updateSensor();
 }
