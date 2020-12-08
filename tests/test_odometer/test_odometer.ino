@@ -29,6 +29,7 @@ void setup()
 	pulses_right = 0;
 	timeold = millis();
 }
+
 void loop()
 {
 
