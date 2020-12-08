@@ -57,7 +57,8 @@ const float gyro_offset_y = -0.232206190976;
 const float gyro_offset_z = 0.20416666666666666;
 // const float gyro_offset_z = 0.;
 
-#define GYRO_Z_RATE_FACTOR 0.00875
+//convers row gyro value to degree per second value
+#define GYRO_ROW_TO_DPS 0.00875
 
 
 //current angular rate
@@ -270,7 +271,7 @@ void update_controller() {
 	gyro.read();
 
 	// 3. calculate giro rate value
-	gyro_rate_z = gyro.g.z * GYRO_Z_RATE_FACTOR - gyro_offset_z;
+	gyro_rate_z = gyro.g.z * GYRO_ROW_TO_DPS - gyro_offset_z;
 
 	//used for update rate
 	if (!controller_on) {
@@ -377,8 +378,9 @@ void setup_speed_sensors() {
 void update_encoders_speed() {
 	unsigned long cur_time = millis();
 
-	//update every 	
-	if (cur_time - encoder_timeold >= ENCODER_SPEED_PERIOD) {
+	//update every
+	unsigned long dt = cur_time - encoder_timeold;
+	if (dt >= ENCODER_SPEED_PERIOD) {
 		encoder_timeold = cur_time;
 		//Не обрабатывать прерывания во время счёта
 		detachInterrupt(digitalPinToInterrupt(encoder_left_pin));
@@ -391,7 +393,9 @@ void update_encoders_speed() {
 		pulses_right = 0;
 		attachInterrupt(digitalPinToInterrupt(encoder_right_pin), counter_right, FALLING);
 
-		Serial2.print("l: ");
+		Serial2.print("dt: ");
+		Serial2.print(dt, 6);
+		Serial2.print(" l: ");
 		Serial2.print(cur_pulses_left, DEC);
 		Serial2.print(" r: ");
 		Serial2.print(cur_pulses_right, DEC);
