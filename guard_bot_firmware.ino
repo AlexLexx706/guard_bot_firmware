@@ -54,12 +54,12 @@ static float gyro_rate_z = 0.0;
 //giroscope offsets, for best accuracy
 const float gyro_offset_x = -0.301108079748;
 const float gyro_offset_y = -0.232206190976;
-const float gyro_offset_z = 0.20416666666666666;
+static float gyro_offset_z = 0;//0.20416666666666666;
 // const float gyro_offset_z = 0.;
 
 //convers row gyro value to degree per second value
 #define GYRO_ROW_TO_DPS 0.00875
-
+#define GYRO_BIAS_LERNING_RATE 0.001
 
 //current angular rate
 static float cur_rate = 0.0;
@@ -71,7 +71,8 @@ static float k_p = 1.0;
 static float k_i = 0.1;
 static float k_d = 0.3;
 static float k_ff = 0.0;
-static int controller_on = 1;
+static int controller_on = 0;
+
 
 
 //speed sensors pins
@@ -249,6 +250,9 @@ void process_actions(char action) {
 
 
 //#define CONTROLLER_DEBUG
+static float pos_x = 0.;
+static float pos_y = 0.;
+static float ref_speed = 0.;
 
 //update motor controller
 void update_controller() {
@@ -271,10 +275,18 @@ void update_controller() {
 	gyro.read();
 
 	// 3. calculate giro rate value
-	gyro_rate_z = gyro.g.z * GYRO_ROW_TO_DPS - gyro_offset_z;
+	float rate_z_no_bias = gyro.g.z * GYRO_ROW_TO_DPS;
+	gyro_rate_z = rate_z_no_bias - gyro_offset_z;
 
 	//used for update rate
+	//TODO: not calculate bias 1 sec after stop contoller
 	if (!controller_on) {
+		//update gyro bias
+		gyro_offset_z += GYRO_BIAS_LERNING_RATE * (rate_z_no_bias - gyro_offset_z);
+		// Serial.print("bias: ");
+		// Serial.print(gyro_offset_z, 6);
+		// Serial.print(" rate: ");
+		// Serial.println(rate_z_no_bias, 6);
 		return;
 	}
 	// 2. get current dt in sec
@@ -282,6 +294,9 @@ void update_controller() {
 
 	// 4. calculate heading angle
 	heading +=	gyro_rate_z * dt;
+    pos_x += ref_speed * cos(heading / 180. * PI) * dt;
+    pos_y += ref_speed * sin(heading / 180. * PI) * dt;
+
 
 	// 5. update controller 
 	float error = cur_rate - gyro_rate_z;
@@ -375,6 +390,11 @@ void setup_speed_sensors() {
 	encoder_timeold = millis();
 }
 
+#define speed_calibration_factor (11.92 / 3.)
+#define pulses_per_revolution 20.
+#define wheel_d 0.065
+#define PI 3.1415926535897932384626433832795
+
 void update_encoders_speed() {
 	unsigned long cur_time = millis();
 
@@ -393,6 +413,11 @@ void update_encoders_speed() {
 		pulses_right = 0;
 		attachInterrupt(digitalPinToInterrupt(encoder_right_pin), counter_right, FALLING);
 
+		//calculate reference speed
+		float l_speed = (float(cur_pulses_left) / pulses_per_revolution * PI * wheel_d) / 0.1 / speed_calibration_factor;
+		float r_speed = (float(cur_pulses_right) / pulses_per_revolution * PI * wheel_d) / 0.1 / speed_calibration_factor;
+		ref_speed = (l_speed + r_speed) / 2.;
+
 		Serial2.print("dt: ");
 		Serial2.print(dt, 6);
 		Serial2.print(" l: ");
@@ -402,7 +427,13 @@ void update_encoders_speed() {
 		Serial2.print(" h: ");
 		Serial2.print(heading, 6);
 		Serial2.print(" r: ");
-		Serial2.println(gyro_rate_z, 6);
+		Serial2.print(gyro_rate_z, 6);
+		Serial2.print(" s: ");
+		Serial2.print(ref_speed, 6);
+		Serial2.print(" x: ");
+		Serial2.print(pos_x, 6);
+		Serial2.print(" y: ");
+		Serial2.println(pos_y, 6);
 	}
 }
 
