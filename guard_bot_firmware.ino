@@ -482,7 +482,7 @@ void setup() {
 
 	setup_speed_sensors();
 	//5. setup camera
-	// setup_mouse_camera();
+	setup_mouse_camera();
 }
 
 static float packet[2];
@@ -515,7 +515,7 @@ void loop() {
 	process_actions(data);
 	update_controller();
 	update_encoders_speed();
-	// updateSensor();
+	updateSensor();
 }
 
 
