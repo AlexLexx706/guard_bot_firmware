@@ -45,9 +45,10 @@ SPISettings spiSettings(2e6, MSBFIRST, SPI_MODE3); // 2 MHz, mode 3
 // Id returned by ADNS3080_PRODUCT_ID register
 #define ADNS3080_PRODUCT_ID_VALUE      0x17
 
-static const uint8_t RESET_PIN = 11; // pin 11
-static const uint8_t SS_PIN = 2; // Pin 2
+#define RESET_PIN A1 // pin 11
+#define SS_PIN A0 // Pin 2
 
+#define LIGHT_PIN A2
 
 
 static int32_t x, y;
@@ -61,6 +62,11 @@ void setup() {
   // Set SS and reset pin as output
   pinMode(SS_PIN, OUTPUT);
   pinMode(RESET_PIN, OUTPUT);
+
+  //set light pin
+  pinMode(LIGHT_PIN, OUTPUT);
+  digitalWrite(LIGHT_PIN, HIGH);
+//  analogWrite(LIGHT_PIN, 150);
   reset();
 
   uint8_t id = spiRead(ADNS3080_PRODUCT_ID);
@@ -77,7 +83,7 @@ void setup() {
 }
 
 void loop() {
-#if 1
+#if 0
   updateSensor();
 #else
   Serial.write("start\n");

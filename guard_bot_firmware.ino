@@ -31,12 +31,12 @@ static int32_t x, y;
 static RF24 radio(10, 9); // CE, CSN
 static byte address[6] = "1Node";	//receive address
 
-// motor one
+// left motor
 const int enA = 8;
 const int in1 = 6;
 const int in2 = 5;
 
-// motor two
+// right motor
 const int enB = 7;
 const int in3 = 4;
 const int in4 = 3;
@@ -482,7 +482,7 @@ void setup() {
 
 	setup_speed_sensors();
 	//5. setup camera
-	setup_mouse_camera();
+  //setup_mouse_camera();
 }
 
 static float packet[2];
@@ -515,7 +515,5 @@ void loop() {
 	process_actions(data);
 	update_controller();
 	update_encoders_speed();
-	updateSensor();
+	//updateSensor();
 }
-
-
