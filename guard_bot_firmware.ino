@@ -14,13 +14,13 @@
 #define PULSES_PER_TURN 20.
 #define WHEEL_DIAMETER 0.065
 #define PI 3.1415926535897932384626433832795
-
+#define PID_DEAD_ZONE 50
 #define CONTROLLER_DEBUG 	 		//enable debug to serial
 
 //PID factors
-static float k_p = 5.f;
-static float k_i = 0.00f;//0.1;
-static float k_d = 0.0f;//0.3;
+static float k_p = 8.f;
+static float k_i = 0.1f;
+static float k_d = 200.f;
 
 
 static float pos_x = 0.;
@@ -182,13 +182,20 @@ void update_controller() {
 		// Serial2.print("  i_v: "); Serial2.print(int_value, 4);
 		// Serial2.print("  d_v: "); Serial2.print(d_value, 4);
 		// Serial2.print("  c_v: "); Serial2.println(common_value, 4);
-		Serial2.println(error, 4);
+		Serial.println(error, 4);
 		#endif
 
-	if (abs(left_power) > 255) {
+	int abs_left_power = abs(left_power);
+	if (abs_left_power < PID_DEAD_ZONE) {
+		left_power = 0;
+	} else  if (abs_left_power > 255) {
 		left_power = left_power > 0 ? 255 : -255; 
 	}
-	if (abs(right_power) > 255) {
+
+	int abs_right_power = abs(right_power);
+	if (abs_right_power < PID_DEAD_ZONE) {
+		right_power = 0;
+	} else if (abs_right_power > 255) {
 		right_power = right_power > 0 ? 255 : -255;	
 	}
 
@@ -355,16 +362,17 @@ void process_bt_data() {
 		if (*ptr == '\n') {
 			*ptr = 0;
 			String res(buffer);
+			ptr = buffer;
 
 			if (res.length()) {
-				Serial2.println(res);
-
 				//search for p=
+				char fail = 1;
 				int index = res.indexOf(String("p="));
 				if (index >= 0) {
 					res = res.substring(index + 2);
 					k_p = res.toFloat();
-					Serial2.println('ok');
+					Serial2.println("ok");
+					fail = 0;
 				}
 
 				//search for p=
@@ -372,7 +380,8 @@ void process_bt_data() {
 				if (index >= 0) {
 					res = res.substring(index + 2);
 					k_i = res.toFloat();
-					Serial2.println('ok');
+					Serial2.println("ok");
+					fail = 0;
 				}
 
 				//search for d=
@@ -380,19 +389,24 @@ void process_bt_data() {
 				if (index >= 0) {
 					res = res.substring(index + 2);
 					k_d = res.toFloat();
-					Serial2.println('ok');
+					Serial2.println("ok");
+					fail = 0;
 				}
 
 				index = res.indexOf(String("print"));
 				if (index >= 0) {
 					Serial2.print("p=");
-					Serial2.print(k_p);
+					Serial2.print(k_p, 6);
 					Serial2.print(" i=");
-					Serial2.print(k_i);
+					Serial2.print(k_i, 6);
 					Serial2.print(" d=");
-					Serial2.println(k_d);
+					Serial2.println(k_d, 6);
+					fail = 0;
 				}
 
+				if (fail == 1) {
+					Serial2.println("unk");
+				}
 			}
 		}
 		//end off buffer
