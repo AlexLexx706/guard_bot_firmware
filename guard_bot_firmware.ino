@@ -6,7 +6,8 @@
 #define GYRO_ROW_TO_DPS 0.00875		//convers row gyro value to degree per second value
 #define GYRO_BIAS_LERNING_RATE 0.001
 #define HEADING_STEP 30.
-#define MAX_RATE 30.f
+#define MAX_RATE 180.f
+#define RATE_STEP 90.f
 #define SPEED_ENCODER_PERIOD 100
 #define POWER_STEP 20				// PWM step increase/decrease
 
@@ -16,14 +17,10 @@
 #define PI 3.1415926535897932384626433832795
 #define PID_DEAD_ZONE 0//50
 #define CONTROLLER_DEBUG 	 		//enable debug to serial
-//PID factors
-// static float k_p = 8.f;
-// static float k_i = 0.1f;
-// static float k_d = 200.f;
-
-static float k_p = 1.0;
-static float k_i = 0.1;
-static float k_d = 0.3;
+//rate PID factors
+static float rate_k_p = 2.0;
+static float rate_k_i = 0.1;
+static float rate_k_d = 3;
 
 static float pos_x = 0.;
 static float pos_y = 0.;
@@ -71,10 +68,21 @@ unsigned long encoder_last_time;
 
 
 //process actions for controller
-void process_actions(char action) {
+void process_radio() {
+	unsigned long data = 0;
+
+	//use NRF as input channel
+	if (radio.available()) {
+		// While there is data ready
+		while (radio.available()) {
+			// Get the payload
+			radio.read(&data, sizeof(data));
+			// Serial.print("Radio receive:"); Serial.println(data);
+		}
+	}
 	char update = 0;
 
-	switch (action) {
+	switch (char(data)) {
 		case 'q': {
 			controller_on = 0;
 			motor_power = 0;
@@ -87,11 +95,13 @@ void process_actions(char action) {
 		case 'w': {
 			motor_power += POWER_STEP;
 			update = 1;
+			Serial.println("w");
 			break;
 		}
 		case 's': {
 			motor_power -= POWER_STEP;
 			update = 1;
+			Serial.println("s");
 			break;
 		}
 		case ' ': {
@@ -101,15 +111,28 @@ void process_actions(char action) {
 			int_value = 0.f;
 			old_error = 0.f;
 			controller_on = 0;
+			Serial.println("stop");
 			break;
 		}
 		case 'a': {
-			target_heading = heading + HEADING_STEP;
+			// target_heading = heading + HEADING_STEP;
+			target_rate += RATE_STEP;
+
+			if (target_rate > MAX_RATE) {
+				target_rate = MAX_RATE;
+			}
+			Serial.print("left target_rate:"); Serial.println(target_rate);
 			update = 1;
 			break;
 		}
 		case 'd': {
-			target_heading = heading - HEADING_STEP;
+			// target_heading = heading - HEADING_STEP;
+			target_rate -= RATE_STEP;
+
+			if (target_rate < -MAX_RATE) {
+				target_rate = -MAX_RATE;
+			}
+			Serial.print("right target_rate:"); Serial.println(target_rate);
 			update = 1;
 			break;
 		}
@@ -117,23 +140,20 @@ void process_actions(char action) {
 
 	if (update) {
 		controller_on = 1;
-		// Serial.print("action: "); Serial.println(action);
-		// Serial.print("motor_power: ");	Serial.println(motor_power);
-		// Serial.print("target_heading: "); Serial.println(target_heading, 4);
 	}
 }
 
-void process_bt_data() {
+void process_serial_commands(HardwareSerial & serial) {
 	/**
-	this function read stream from Serial2 and decode data for pid settings:
+	this function read stream from serial and decode data for pid settings:
 	for setup PID factors, write: p=12.31 i=0.1 d=0.0
 	for printing current PID factor, write: print
 	*/
 	static char buffer[30];
 	static char * ptr = buffer;
 
-	if (Serial2.available()) {
-		*ptr = Serial2.read();
+	if (serial.available()) {
+		*ptr = serial.read();
 
 		//end of line
 		if (*ptr == '\n') {
@@ -147,8 +167,8 @@ void process_bt_data() {
 				int index = res.indexOf(String("p="));
 				if (index >= 0) {
 					res = res.substring(index + 2);
-					k_p = res.toFloat();
-					Serial2.println("ok");
+					rate_k_p = res.toFloat();
+					serial.println("ok");
 					fail = 0;
 				}
 
@@ -156,8 +176,8 @@ void process_bt_data() {
 				index = res.indexOf(String("i="));
 				if (index >= 0) {
 					res = res.substring(index + 2);
-					k_i = res.toFloat();
-					Serial2.println("ok");
+					rate_k_i = res.toFloat();
+					serial.println("ok");
 					fail = 0;
 				}
 
@@ -165,24 +185,24 @@ void process_bt_data() {
 				index = res.indexOf(String("d="));
 				if (index >= 0) {
 					res = res.substring(index + 2);
-					k_d = res.toFloat();
-					Serial2.println("ok");
+					rate_k_d = res.toFloat();
+					serial.println("ok");
 					fail = 0;
 				}
 
 				index = res.indexOf(String("print"));
 				if (index >= 0) {
-					Serial2.print("p=");
-					Serial2.print(k_p, 6);
-					Serial2.print(" i=");
-					Serial2.print(k_i, 6);
-					Serial2.print(" d=");
-					Serial2.println(k_d, 6);
+					serial.print("p=");
+					serial.print(rate_k_p, 6);
+					serial.print(" i=");
+					serial.print(rate_k_i, 6);
+					serial.print(" d=");
+					serial.println(rate_k_d, 6);
 					fail = 0;
 				}
 
 				if (fail == 1) {
-					Serial2.println("unk");
+					serial.println("unk");
 				}
 			}
 		}
@@ -195,7 +215,7 @@ void process_bt_data() {
 
 
 //update motor controller
-void update_controller() {
+void update_controller(HardwareSerial & debug_serial) {
 	//0. stop motors
 	if (!controller_on) {
 		analogWrite(enA, 0);
@@ -227,7 +247,7 @@ void update_controller() {
 		return;
 	}
 
-	// 4. get current dt in sec
+	// 4	. get current dt in sec
 	float dt = micros_dt / 1000000.f;
 
 	// 5. calculate heading angle
@@ -237,20 +257,11 @@ void update_controller() {
 	pos_x += ref_speed * cos(heading / 180. * PI) * dt;
 	pos_y += ref_speed * sin(heading / 180. * PI) * dt;
 
-	//calculate target_rate for target_heading
-	float heading_error = target_heading - heading;
-	target_rate = heading_error / dt;
-
-	if (abs(target_rate) > MAX_RATE) {
-		target_rate = target_rate > 0.f ? MAX_RATE : -MAX_RATE;
-	}
-
-
 	// 9. process PID controller for rate
 	float error = target_rate - gyro_rate_z;
-	float p_value = error * k_p;
-	float d_value = (error - old_error) * k_d;
-	int_value += error * k_i;
+	float p_value = error * rate_k_p;
+	float d_value = (error - old_error) * rate_k_d;
+	int_value += error * rate_k_i;
 
 	float common_value = p_value + int_value + d_value;
 	old_error = error;
@@ -259,15 +270,9 @@ void update_controller() {
 	int right_power = motor_power + common_value;
 
 	#ifdef CONTROLLER_DEBUG
-		// Serial.print(" t_h: "); Serial.print(target_heading, 4);
-		// Serial.print(" c_h: "); Serial.print(heading, 4);
-		// Serial.print(" e: "); Serial.print(error, 4);
-		// Serial2.print("p_v: "); Serial2.print(p_value, 4);
-		// Serial2.print("  i_v: "); Serial2.print(int_value, 4);
-		// Serial2.print("  d_v: "); Serial2.print(d_value, 4);
-		// Serial2.print("  c_v: "); Serial2.println(common_value, 4);
-		// Serial.print(error, 4); Serial.print(" ");
-		Serial.print(target_rate, 4);  Serial.print(","); Serial.println(gyro_rate_z, 4);
+		debug_serial.print(target_rate, 4);
+		debug_serial.print(",");
+		debug_serial.println(gyro_rate_z, 4);
 	#endif
 
 	int abs_left_power = abs(left_power);
@@ -315,7 +320,7 @@ void update_controller() {
 		unsigned long count_dt = cur_time - start_count_time;
 		if (count_dt > 3000000) {
 			start_count_time = cur_time;
-			Serial.print("process per second:"); Serial.println(int(process_count / (count_dt / 1000000.)));
+			debug_serial.print("process per second:"); debug_serial.println(int(process_count / (count_dt / 1000000.)));
 			process_count = 0;
 		}
 	#endif
@@ -434,26 +439,8 @@ void setup() {
 
 
 void loop() {
-	unsigned long data = 0;
-
-	//use serial command channel
-	if (Serial.available()) {
-		data = Serial.read();
-	}
-
-	//use NRF as input channel
-	if (radio.available()) {
-		// While there is data ready
-		while (radio.available()) {
-			// Get the payload
-			radio.read(&data, sizeof(data));
-			Serial.print("Radio receive:"); Serial.println(data);
-		}
-	}
-
-	process_actions(data);
-	update_controller();
+	process_radio();
+	process_serial_commands(Serial);
 	update_encoders_speed();
-	process_bt_data();
-	//updateSensor();
+	update_controller(Serial);
 }
