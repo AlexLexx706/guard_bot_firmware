@@ -6,7 +6,7 @@
 #define GYRO_ROW_TO_DPS 0.00875		//convers row gyro value to degree per second value
 #define GYRO_BIAS_LERNING_RATE 0.001
 #define HEADING_STEP 30.
-#define MAX_RATE 180
+#define MAX_RATE 30.f
 #define SPEED_ENCODER_PERIOD 100
 #define POWER_STEP 20				// PWM step increase/decrease
 
@@ -14,14 +14,16 @@
 #define PULSES_PER_TURN 20.
 #define WHEEL_DIAMETER 0.065
 #define PI 3.1415926535897932384626433832795
-#define PID_DEAD_ZONE 50
+#define PID_DEAD_ZONE 0//50
 #define CONTROLLER_DEBUG 	 		//enable debug to serial
-
 //PID factors
-static float k_p = 8.f;
-static float k_i = 0.1f;
-static float k_d = 200.f;
+// static float k_p = 8.f;
+// static float k_i = 0.1f;
+// static float k_d = 200.f;
 
+static float k_p = 1.0;
+static float k_i = 0.1;
+static float k_d = 0.3;
 
 static float pos_x = 0.;
 static float pos_y = 0.;
@@ -51,7 +53,8 @@ static float gyro_offset_z = 0.f;
 
 
 //current angular rate
-static float cur_heading = 0.f;
+static float target_heading = 0.f;
+static float target_rate = 0.f;
 static float int_value = 0.f;
 static float old_error = 0.f;
 static int controller_on = 0;
@@ -75,7 +78,8 @@ void process_actions(char action) {
 		case 'q': {
 			controller_on = 0;
 			motor_power = 0;
-			cur_heading = heading;
+			target_heading = heading;
+			target_rate = 0.f;
 			int_value = 0.f;
 			old_error = 0.f;
 			break;
@@ -92,19 +96,20 @@ void process_actions(char action) {
 		}
 		case ' ': {
 			motor_power = 0;
-			cur_heading = heading;
+			target_heading = heading;
+			target_rate = 0.f;
 			int_value = 0.f;
 			old_error = 0.f;
 			controller_on = 0;
 			break;
 		}
 		case 'a': {
-			cur_heading = heading + HEADING_STEP;
+			target_heading = heading + HEADING_STEP;
 			update = 1;
 			break;
 		}
 		case 'd': {
-			cur_heading = heading - HEADING_STEP;
+			target_heading = heading - HEADING_STEP;
 			update = 1;
 			break;
 		}
@@ -112,12 +117,82 @@ void process_actions(char action) {
 
 	if (update) {
 		controller_on = 1;
-		Serial.print("action: "); Serial.println(action);
-		Serial.print("motor_power: ");	Serial.println(motor_power);
-		Serial.print("cur_heading: "); Serial.println(cur_heading, 4);
+		// Serial.print("action: "); Serial.println(action);
+		// Serial.print("motor_power: ");	Serial.println(motor_power);
+		// Serial.print("target_heading: "); Serial.println(target_heading, 4);
 	}
-
 }
+
+void process_bt_data() {
+	/**
+	this function read stream from Serial2 and decode data for pid settings:
+	for setup PID factors, write: p=12.31 i=0.1 d=0.0
+	for printing current PID factor, write: print
+	*/
+	static char buffer[30];
+	static char * ptr = buffer;
+
+	if (Serial2.available()) {
+		*ptr = Serial2.read();
+
+		//end of line
+		if (*ptr == '\n') {
+			*ptr = 0;
+			String res(buffer);
+			ptr = buffer;
+
+			if (res.length()) {
+				//search for p=
+				char fail = 1;
+				int index = res.indexOf(String("p="));
+				if (index >= 0) {
+					res = res.substring(index + 2);
+					k_p = res.toFloat();
+					Serial2.println("ok");
+					fail = 0;
+				}
+
+				//search for p=
+				index = res.indexOf(String("i="));
+				if (index >= 0) {
+					res = res.substring(index + 2);
+					k_i = res.toFloat();
+					Serial2.println("ok");
+					fail = 0;
+				}
+
+				//search for d=
+				index = res.indexOf(String("d="));
+				if (index >= 0) {
+					res = res.substring(index + 2);
+					k_d = res.toFloat();
+					Serial2.println("ok");
+					fail = 0;
+				}
+
+				index = res.indexOf(String("print"));
+				if (index >= 0) {
+					Serial2.print("p=");
+					Serial2.print(k_p, 6);
+					Serial2.print(" i=");
+					Serial2.print(k_i, 6);
+					Serial2.print(" d=");
+					Serial2.println(k_d, 6);
+					fail = 0;
+				}
+
+				if (fail == 1) {
+					Serial2.println("unk");
+				}
+			}
+		}
+		//end off buffer
+		if (++ptr == buffer) {
+			ptr = buffer;
+		}
+	}
+}
+
 
 //update motor controller
 void update_controller() {
@@ -162,8 +237,17 @@ void update_controller() {
 	pos_x += ref_speed * cos(heading / 180. * PI) * dt;
 	pos_y += ref_speed * sin(heading / 180. * PI) * dt;
 
+	//calculate target_rate for target_heading
+	float heading_error = target_heading - heading;
+	target_rate = heading_error / dt;
+
+	if (abs(target_rate) > MAX_RATE) {
+		target_rate = target_rate > 0.f ? MAX_RATE : -MAX_RATE;
+	}
+
+
 	// 9. process PID controller for rate
-	float error = cur_heading - heading;
+	float error = target_rate - gyro_rate_z;
 	float p_value = error * k_p;
 	float d_value = (error - old_error) * k_d;
 	int_value += error * k_i;
@@ -175,17 +259,19 @@ void update_controller() {
 	int right_power = motor_power + common_value;
 
 	#ifdef CONTROLLER_DEBUG
-		// Serial.print(" t_h: "); Serial.print(cur_heading, 4);
+		// Serial.print(" t_h: "); Serial.print(target_heading, 4);
 		// Serial.print(" c_h: "); Serial.print(heading, 4);
 		// Serial.print(" e: "); Serial.print(error, 4);
 		// Serial2.print("p_v: "); Serial2.print(p_value, 4);
 		// Serial2.print("  i_v: "); Serial2.print(int_value, 4);
 		// Serial2.print("  d_v: "); Serial2.print(d_value, 4);
 		// Serial2.print("  c_v: "); Serial2.println(common_value, 4);
-		Serial.println(error, 4);
-		#endif
+		// Serial.print(error, 4); Serial.print(" ");
+		Serial.print(target_rate, 4);  Serial.print(","); Serial.println(gyro_rate_z, 4);
+	#endif
 
 	int abs_left_power = abs(left_power);
+
 	if (abs_left_power < PID_DEAD_ZONE) {
 		left_power = 0;
 	} else  if (abs_left_power > 255) {
@@ -346,75 +432,6 @@ void setup() {
 	setup_speed_sensors();
 }
 
-void process_bt_data() {
-	/**
-	this function used for pid settings:
-	for setup PID factors, write: p=12.31 i=0.1 d=0.0
-	for printing current PID factor, write: print
-	*/
-	static char buffer[30];
-	static char * ptr = buffer;
-
-	if (Serial2.available()) {
-		*ptr = Serial2.read();
-
-		//end of line
-		if (*ptr == '\n') {
-			*ptr = 0;
-			String res(buffer);
-			ptr = buffer;
-
-			if (res.length()) {
-				//search for p=
-				char fail = 1;
-				int index = res.indexOf(String("p="));
-				if (index >= 0) {
-					res = res.substring(index + 2);
-					k_p = res.toFloat();
-					Serial2.println("ok");
-					fail = 0;
-				}
-
-				//search for p=
-				index = res.indexOf(String("i="));
-				if (index >= 0) {
-					res = res.substring(index + 2);
-					k_i = res.toFloat();
-					Serial2.println("ok");
-					fail = 0;
-				}
-
-				//search for d=
-				index = res.indexOf(String("d="));
-				if (index >= 0) {
-					res = res.substring(index + 2);
-					k_d = res.toFloat();
-					Serial2.println("ok");
-					fail = 0;
-				}
-
-				index = res.indexOf(String("print"));
-				if (index >= 0) {
-					Serial2.print("p=");
-					Serial2.print(k_p, 6);
-					Serial2.print(" i=");
-					Serial2.print(k_i, 6);
-					Serial2.print(" d=");
-					Serial2.println(k_d, 6);
-					fail = 0;
-				}
-
-				if (fail == 1) {
-					Serial2.println("unk");
-				}
-			}
-		}
-		//end off buffer
-		if (++ptr == buffer) {
-			ptr = buffer;
-		}
-	}
-}
 
 void loop() {
 	unsigned long data = 0;
