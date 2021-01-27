@@ -2,12 +2,13 @@
 #include "RF24.h"
 #include <L3G.h>
 #include <Wire.h>
+#include "utils/simple_pid.h"
 
 #define GYRO_ROW_TO_DPS 0.00875		//convers row gyro value to degree per second value
 #define GYRO_BIAS_LERNING_RATE 0.001
 #define HEADING_STEP 30.
 #define MAX_RATE 180.f
-#define RATE_STEP 90.f
+#define RATE_STEP 5.f
 #define SPEED_ENCODER_PERIOD 100
 #define POWER_STEP 20				// PWM step increase/decrease
 
@@ -17,10 +18,13 @@
 #define PI 3.1415926535897932384626433832795
 #define PID_DEAD_ZONE 0//50
 #define CONTROLLER_DEBUG 	 		//enable debug to serial
-//rate PID factors
-static float rate_k_p = 2.0;
-static float rate_k_i = 0.1;
-static float rate_k_d = 3;
+
+//rate PID
+static SimplePID rate_pid(
+	2.0,	//p factor
+	0.1,	//i factor
+	3.,		//d factor
+	250);	//max integrator value
 
 static float pos_x = 0.;
 static float pos_y = 0.;
@@ -52,8 +56,6 @@ static float gyro_offset_z = 0.f;
 //current angular rate
 static float target_heading = 0.f;
 static float target_rate = 0.f;
-static float int_value = 0.f;
-static float old_error = 0.f;
 static int controller_on = 0;
 
 //speed sensors pins
@@ -88,8 +90,7 @@ void process_radio() {
 			motor_power = 0;
 			target_heading = heading;
 			target_rate = 0.f;
-			int_value = 0.f;
-			old_error = 0.f;
+			rate_pid.reset();
 			break;
 		}
 		case 'w': {
@@ -108,8 +109,7 @@ void process_radio() {
 			motor_power = 0;
 			target_heading = heading;
 			target_rate = 0.f;
-			int_value = 0.f;
-			old_error = 0.f;
+			rate_pid.reset();
 			controller_on = 0;
 			Serial.println("stop");
 			break;
@@ -167,7 +167,7 @@ void process_serial_commands(HardwareSerial & serial) {
 				int index = res.indexOf(String("p="));
 				if (index >= 0) {
 					res = res.substring(index + 2);
-					rate_k_p = res.toFloat();
+					rate_pid.p = res.toFloat();
 					serial.println("ok");
 					fail = 0;
 				}
@@ -176,7 +176,7 @@ void process_serial_commands(HardwareSerial & serial) {
 				index = res.indexOf(String("i="));
 				if (index >= 0) {
 					res = res.substring(index + 2);
-					rate_k_i = res.toFloat();
+					rate_pid.i = res.toFloat();
 					serial.println("ok");
 					fail = 0;
 				}
@@ -185,7 +185,7 @@ void process_serial_commands(HardwareSerial & serial) {
 				index = res.indexOf(String("d="));
 				if (index >= 0) {
 					res = res.substring(index + 2);
-					rate_k_d = res.toFloat();
+					rate_pid.d = res.toFloat();
 					serial.println("ok");
 					fail = 0;
 				}
@@ -193,11 +193,11 @@ void process_serial_commands(HardwareSerial & serial) {
 				index = res.indexOf(String("print"));
 				if (index >= 0) {
 					serial.print("p=");
-					serial.print(rate_k_p, 6);
+					serial.print(rate_pid.p, 6);
 					serial.print(" i=");
-					serial.print(rate_k_i, 6);
+					serial.print(rate_pid.i, 6);
 					serial.print(" d=");
-					serial.println(rate_k_d, 6);
+					serial.println(rate_pid.d, 6);
 					fail = 0;
 				}
 
@@ -258,14 +258,7 @@ void update_controller(HardwareSerial & debug_serial) {
 	pos_y += ref_speed * sin(heading / 180. * PI) * dt;
 
 	// 9. process PID controller for rate
-	float error = target_rate - gyro_rate_z;
-	float p_value = error * rate_k_p;
-	float d_value = (error - old_error) * rate_k_d;
-	int_value += error * rate_k_i;
-
-	float common_value = p_value + int_value + d_value;
-	old_error = error;
-
+	float common_value = rate_pid.compute(gyro_rate_z, target_rate);
 	int left_power = motor_power - common_value;
 	int right_power = motor_power + common_value;
 
