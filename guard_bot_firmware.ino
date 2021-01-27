@@ -8,7 +8,7 @@
 #define GYRO_BIAS_LERNING_RATE 0.001
 #define HEADING_STEP 30.
 #define MAX_RATE 180.f
-#define RATE_STEP 5.f
+#define RATE_STEP 10.f
 #define SPEED_ENCODER_PERIOD 100
 #define POWER_STEP 20				// PWM step increase/decrease
 
@@ -21,7 +21,7 @@
 
 //rate PID
 static SimplePID rate_pid(
-	2.0,	//p factor
+	1.0,	//p factor
 	0.1,	//i factor
 	3.,		//d factor
 	250);	//max integrator value
