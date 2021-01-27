@@ -7,7 +7,7 @@
 #define GYRO_BIAS_LERNING_RATE 0.001
 #define HEADING_STEP 30.
 #define MAX_RATE 180.f
-#define RATE_STEP 90.f
+#define RATE_STEP 10.f
 #define SPEED_ENCODER_PERIOD 100
 #define POWER_STEP 20				// PWM step increase/decrease
 
