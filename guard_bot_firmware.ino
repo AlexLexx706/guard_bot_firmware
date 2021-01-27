@@ -6,9 +6,9 @@
 
 #define GYRO_ROW_TO_DPS 0.00875		//convers row gyro value to degree per second value
 #define GYRO_BIAS_LERNING_RATE 0.001
-#define HEADING_STEP 30.
+#define HEADING_STEP 90.
 #define MAX_RATE 180.f
-#define RATE_STEP 10.f
+#define RATE_STEP 60.f
 #define SPEED_ENCODER_PERIOD 100
 #define POWER_STEP 20				// PWM step increase/decrease
 
@@ -16,7 +16,7 @@
 #define PULSES_PER_TURN 20.
 #define WHEEL_DIAMETER 0.065
 #define PI 3.1415926535897932384626433832795
-#define PID_DEAD_ZONE 0//50
+#define PID_DEAD_ZONE 25
 #define CONTROLLER_DEBUG 	 		//enable debug to serial
 
 //rate PID
@@ -26,6 +26,15 @@ static SimplePID rate_pid(
 	3.,		//d factor
 	250);	//max integrator value
 
+
+//rate PID
+static SimplePID heading_pid(
+	3.0,	//p factor
+	0.01,	//i factor
+	10.0,	//d factor
+	10.);	//max integrator value
+
+static char use_heading_control = 1;
 static float pos_x = 0.;
 static float pos_y = 0.;
 static float ref_speed = 0.;
@@ -59,13 +68,13 @@ static float target_rate = 0.f;
 static int controller_on = 0;
 
 //speed sensors pins
-const int encoder_left_pin = 18; 
+const int encoder_left_pin = 18;
 const int encoder_right_pin = 19;
 
 // counters, used for count impulses from wheel speed sensors
 volatile byte pulses_left, pulses_right;
 
-//used for calculate wheel speeds 
+//used for calculate wheel speeds
 unsigned long encoder_last_time;
 
 
@@ -115,24 +124,36 @@ void process_radio() {
 			break;
 		}
 		case 'a': {
-			// target_heading = heading + HEADING_STEP;
-			target_rate += RATE_STEP;
-
-			if (target_rate > MAX_RATE) {
-				target_rate = MAX_RATE;
+			//control by heading
+			if (use_heading_control) {
+				target_heading = heading + HEADING_STEP;
+				target_rate = RATE_STEP;
+				Serial.print("left target_heading:"); Serial.println(target_heading);
+			//control by rate
+			} else {
+				target_rate += RATE_STEP;
+				if (target_rate > MAX_RATE) {
+					target_rate = MAX_RATE;
+				}
 			}
+
 			Serial.print("left target_rate:"); Serial.println(target_rate);
 			update = 1;
 			break;
 		}
 		case 'd': {
-			// target_heading = heading - HEADING_STEP;
-			target_rate -= RATE_STEP;
+			if (use_heading_control) {
+				target_heading = heading - HEADING_STEP;
+				target_rate = RATE_STEP;
+				Serial.print("right target_heading:"); Serial.println(target_heading);
+			} else {
+				target_rate -= RATE_STEP;
 
-			if (target_rate < -MAX_RATE) {
-				target_rate = -MAX_RATE;
+				if (target_rate < -MAX_RATE) {
+					target_rate = -MAX_RATE;
+				}
+				Serial.print("right target_rate:"); Serial.println(target_rate);
 			}
-			Serial.print("right target_rate:"); Serial.println(target_rate);
 			update = 1;
 			break;
 		}
@@ -257,15 +278,30 @@ void update_controller(HardwareSerial & debug_serial) {
 	pos_x += ref_speed * cos(heading / 180. * PI) * dt;
 	pos_y += ref_speed * sin(heading / 180. * PI) * dt;
 
+	// 9. process PID controller for heading and rate
+	float control_pid;
+	float current_target_rate = target_rate;
+
+	if (use_heading_control) {
+		 current_target_rate = heading_pid.compute(heading, target_heading);
+
+		//limiting of heading rate
+		if (abs(current_target_rate) > target_rate) {
+			current_target_rate = current_target_rate > 0 ? target_rate : -target_rate;
+		}
 	// 9. process PID controller for rate
-	float common_value = rate_pid.compute(gyro_rate_z, target_rate);
-	int left_power = motor_power - common_value;
-	int right_power = motor_power + common_value;
+	}
+	control_pid = rate_pid.compute(gyro_rate_z, current_target_rate);
+
+	int left_power = motor_power - control_pid;
+	int right_power = motor_power + control_pid;
 
 	#ifdef CONTROLLER_DEBUG
-		debug_serial.print(target_rate, 4);
+		debug_serial.print(target_heading, 4);
 		debug_serial.print(",");
-		debug_serial.println(gyro_rate_z, 4);
+		debug_serial.print(heading, 4);
+		debug_serial.print(',');
+		debug_serial.println(gyro_rate_z);
 	#endif
 
 	int abs_left_power = abs(left_power);
@@ -273,14 +309,14 @@ void update_controller(HardwareSerial & debug_serial) {
 	if (abs_left_power < PID_DEAD_ZONE) {
 		left_power = 0;
 	} else  if (abs_left_power > 255) {
-		left_power = left_power > 0 ? 255 : -255; 
+		left_power = left_power > 0 ? 255 : -255;
 	}
 
 	int abs_right_power = abs(right_power);
 	if (abs_right_power < PID_DEAD_ZONE) {
 		right_power = 0;
 	} else if (abs_right_power > 255) {
-		right_power = right_power > 0 ? 255 : -255;	
+		right_power = right_power > 0 ? 255 : -255;
 	}
 
 	// turn on motor A
@@ -291,7 +327,7 @@ void update_controller(HardwareSerial & debug_serial) {
 		digitalWrite(in1, HIGH);
 		digitalWrite(in2, LOW);
 	}
- 
+
 	analogWrite(enA, abs(left_power));
 
 	// turn on motor B
@@ -305,11 +341,11 @@ void update_controller(HardwareSerial & debug_serial) {
 	analogWrite(enB, abs(right_power));
 
 	#ifdef CONTROLLER_DEBUG
-		//print count per second 
+		//print count per second
 		static unsigned long start_count_time = 0;
 		static int process_count = 0;
 		process_count++;
-	 
+
 		unsigned long count_dt = cur_time - start_count_time;
 		if (count_dt > 3000000) {
 			start_count_time = cur_time;
